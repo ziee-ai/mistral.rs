@@ -1,0 +1,273 @@
+name: Build and Release mistralrs-server Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.7.0)'
+        required: true
+        type: string
+
+env:
+  MISTRALRS_VERSION: 0.7.0  # Update this to match mistral.rs version
+
+jobs:
+  build-matrix:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 - CPU, CUDA
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            backend: cpu
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            backend: cuda
+            target: x86_64-unknown-linux-gnu
+            cuda_version: "12.4.0"
+            features: cuda
+
+          # Linux aarch64 - CPU only
+          - os: ubuntu-22.04-arm64
+            platform: linux
+            arch: aarch64
+            backend: cpu
+            target: aarch64-unknown-linux-gnu
+            cross: true
+
+          # macOS aarch64 - Metal (combined with CPU)
+          - os: macos-14  # M1 runner
+            platform: macos
+            arch: aarch64
+            backend: metal
+            target: aarch64-apple-darwin
+            features: metal
+
+          # Windows x86_64 - CPU, CUDA
+          - os: windows-2022
+            platform: windows
+            arch: x86_64
+            backend: cpu
+            target: x86_64-pc-windows-msvc
+          - os: windows-2022
+            platform: windows
+            arch: x86_64
+            backend: cuda
+            target: x86_64-pc-windows-msvc
+            cuda_version: "12.4.0"
+            features: cuda
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      # Linux CUDA setup
+      - name: Install CUDA (Linux)
+        if: matrix.backend == 'cuda' && runner.os == 'Linux'
+        uses: Jimver/cuda-toolkit@v0.2.14
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: network
+          sub-packages: '["nvcc", "cudart"]'
+
+      # Windows CUDA setup
+      - name: Install CUDA (Windows)
+        if: matrix.backend == 'cuda' && runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.14
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: network
+          sub-packages: '["nvcc", "cudart"]'
+
+      # Linux dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev
+
+      # macOS dependencies
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config openssl
+
+      # Windows dependencies
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Build mistralrs-server with native Cargo
+      - name: Build mistralrs-server
+        shell: bash
+        run: |
+          # Build command based on backend
+          if [ -n "${{ matrix.features }}" ]; then
+            echo "Building with features: ${{ matrix.features }}"
+            cargo build --release --package mistralrs-server --features "${{ matrix.features }}"
+          else
+            echo "Building with default features (CPU)"
+            cargo build --release --package mistralrs-server
+          fi
+
+          echo "Build complete"
+          ls -lah target/release/
+
+      # Find the built binary
+      - name: Find binary path
+        id: find_binary
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BINARY_PATH="target/release/mistralrs-server.exe"
+            BINARY_NAME="mistralrs-server.exe"
+          else
+            BINARY_PATH="target/release/mistralrs-server"
+            BINARY_NAME="mistralrs-server"
+          fi
+
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "ERROR: Binary not found at $BINARY_PATH!"
+            find target/release -name "mistralrs-server*" || true
+            exit 1
+          fi
+
+          echo "binary_path=$BINARY_PATH" >> $GITHUB_OUTPUT
+          echo "binary_name=$BINARY_NAME" >> $GITHUB_OUTPUT
+          echo "Found binary at: $BINARY_PATH"
+
+      # Create release directory structure
+      - name: Prepare release archive
+        shell: bash
+        run: |
+          mkdir -p release
+
+          # Copy binary
+          cp "${{ steps.find_binary.outputs.binary_path }}" "release/${{ steps.find_binary.outputs.binary_name }}"
+
+          # Create version file
+          echo "mistralrs-server" > release/version.txt
+          echo "${{ env.MISTRALRS_VERSION }}" >> release/version.txt
+          echo "Backend: ${{ matrix.backend }}" >> release/version.txt
+          echo "Platform: ${{ matrix.platform }}-${{ matrix.arch }}" >> release/version.txt
+          echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/version.txt
+
+          # Make executable on Unix
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x "release/${{ steps.find_binary.outputs.binary_name }}"
+          fi
+
+          echo "Release directory contents:"
+          ls -lah release/
+
+      # Create archive
+      - name: Create archive
+        shell: bash
+        run: |
+          ARCHIVE_NAME="mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}"
+
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a "${ARCHIVE_NAME}.zip" ./release/*
+            echo "ARCHIVE_FILE=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+          else
+            tar czf "${ARCHIVE_NAME}.tar.gz" -C release .
+            echo "ARCHIVE_FILE=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      # Generate checksum
+      - name: Generate checksum
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            certutil -hashfile "$ARCHIVE_FILE" SHA256 > "${ARCHIVE_FILE}.sha256"
+          else
+            shasum -a 256 "$ARCHIVE_FILE" > "${ARCHIVE_FILE}.sha256"
+          fi
+
+          cat "${ARCHIVE_FILE}.sha256"
+
+      # Upload artifacts
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
+          path: |
+            ${{ env.ARCHIVE_FILE }}
+            ${{ env.ARCHIVE_FILE }}.sha256
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          ls -lah release-assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## mistralrs-server Release ${{ github.ref_name }}
+
+            Based on mistral.rs version: `${{ env.MISTRALRS_VERSION }}`
+
+            ### Supported Platforms and Backends
+
+            - **Linux x86_64**: CPU, CUDA
+            - **Linux aarch64**: CPU
+            - **macOS aarch64**: Metal
+            - **Windows x86_64**: CPU, CUDA
+
+            ### Installation
+
+            1. Download the appropriate archive for your platform and GPU backend
+            2. Extract the archive
+            3. The `mistralrs-server` binary is ready to use
+
+            ### Checksums
+
+            SHA256 checksums are provided for each archive file. Verify downloads with:
+            ```bash
+            shasum -a 256 -c mistralrs-server-*.sha256
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
