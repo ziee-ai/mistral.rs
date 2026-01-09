@@ -10,9 +10,26 @@ on:
         description: 'Version tag (e.g., v0.7.0)'
         required: true
         type: string
-
-env:
-  MISTRALRS_VERSION: 0.7.0  # Update this to match mistral.rs version
+      platform:
+        description: 'Platform to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux
+          - macos
+          - windows
+      backend:
+        description: 'Backend to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - cpu
+          - metal
+          - cuda
 
 jobs:
   build-matrix:
@@ -68,12 +85,40 @@ jobs:
             features: cuda
 
     steps:
+      # Check if this matrix entry should run based on filters
+      - name: Check build filter
+        id: filter
+        shell: bash
+        run: |
+          PLATFORM_MATCH="false"
+          BACKEND_MATCH="false"
+
+          # Platform filter
+          if [ "${{ inputs.platform }}" == "all" ] || [ "${{ inputs.platform }}" == "" ] || [ "${{ inputs.platform }}" == "${{ matrix.platform }}" ]; then
+            PLATFORM_MATCH="true"
+          fi
+
+          # Backend filter
+          if [ "${{ inputs.backend }}" == "all" ] || [ "${{ inputs.backend }}" == "" ] || [ "${{ inputs.backend }}" == "${{ matrix.backend }}" ]; then
+            BACKEND_MATCH="true"
+          fi
+
+          if [ "$PLATFORM_MATCH" == "true" ] && [ "$BACKEND_MATCH" == "true" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "✅ Build will run: platform=${{ matrix.platform }}, backend=${{ matrix.backend }}"
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping: platform=${{ matrix.platform }}, backend=${{ matrix.backend }} (filter: platform=${{ inputs.platform }}, backend=${{ inputs.backend }})"
+          fi
+
       - name: Checkout repository
+        if: steps.filter.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Set up Rust
+        if: steps.filter.outputs.should_run == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
@@ -81,7 +126,7 @@ jobs:
 
       # Linux CUDA setup
       - name: Install CUDA (Linux)
-        if: matrix.backend == 'cuda' && runner.os == 'Linux'
+        if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.14
         with:
           cuda: ${{ matrix.cuda_version }}
@@ -90,7 +135,7 @@ jobs:
 
       # Windows CUDA setup
       - name: Install CUDA (Windows)
-        if: matrix.backend == 'cuda' && runner.os == 'Windows'
+        if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Windows'
         uses: Jimver/cuda-toolkit@v0.2.14
         with:
           cuda: ${{ matrix.cuda_version }}
@@ -99,24 +144,25 @@ jobs:
 
       # Linux dependencies
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+        if: steps.filter.outputs.should_run == 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev
 
       # macOS dependencies
       - name: Install macOS dependencies
-        if: runner.os == 'macOS'
+        if: steps.filter.outputs.should_run == 'true' && runner.os == 'macOS'
         run: |
           brew install pkg-config openssl
 
       # Windows dependencies
       - name: Setup MSVC (Windows)
-        if: runner.os == 'Windows'
+        if: steps.filter.outputs.should_run == 'true' && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
       # Build mistralrs-server with native Cargo
       - name: Build mistralrs-server
+        if: steps.filter.outputs.should_run == 'true'
         shell: bash
         run: |
           # Build command based on backend
@@ -133,6 +179,7 @@ jobs:
 
       # Find the built binary
       - name: Find binary path
+        if: steps.filter.outputs.should_run == 'true'
         id: find_binary
         shell: bash
         run: |
@@ -156,6 +203,7 @@ jobs:
 
       # Create release directory structure
       - name: Prepare release archive
+        if: steps.filter.outputs.should_run == 'true'
         shell: bash
         run: |
           mkdir -p release
@@ -165,7 +213,7 @@ jobs:
 
           # Create version file
           echo "mistralrs-server" > release/version.txt
-          echo "${{ env.MISTRALRS_VERSION }}" >> release/version.txt
+          echo "${{ github.ref_name }}" >> release/version.txt
           echo "Backend: ${{ matrix.backend }}" >> release/version.txt
           echo "Platform: ${{ matrix.platform }}-${{ matrix.arch }}" >> release/version.txt
           echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/version.txt
@@ -180,6 +228,7 @@ jobs:
 
       # Create archive
       - name: Create archive
+        if: steps.filter.outputs.should_run == 'true'
         shell: bash
         run: |
           ARCHIVE_NAME="mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}"
@@ -194,6 +243,7 @@ jobs:
 
       # Generate checksum
       - name: Generate checksum
+        if: steps.filter.outputs.should_run == 'true'
         shell: bash
         run: |
           if [ "${{ runner.os }}" == "Windows" ]; then
@@ -206,6 +256,7 @@ jobs:
 
       # Upload artifacts
       - name: Upload artifact
+        if: steps.filter.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
@@ -247,8 +298,6 @@ jobs:
           generate_release_notes: true
           body: |
             ## mistralrs-server Release ${{ github.ref_name }}
-
-            Based on mistral.rs version: `${{ env.MISTRALRS_VERSION }}`
 
             ### Supported Platforms and Backends
 
