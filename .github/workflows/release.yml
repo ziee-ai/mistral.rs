@@ -124,6 +124,13 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
+      # Cache Rust build artifacts
+      - name: Setup Rust cache
+        if: steps.filter.outputs.should_run == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
+
       # Linux CUDA setup
       - name: Install CUDA (Linux)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Linux'
