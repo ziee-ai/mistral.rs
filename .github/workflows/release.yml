@@ -40,19 +40,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 - CPU, CUDA
+          # Linux x86_64 - CPU only (CUDA handled in separate build-cuda job)
           - os: ubuntu-22.04
             platform: linux
             arch: x86_64
             backend: cpu
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x86_64
-            backend: cuda
-            target: x86_64-unknown-linux-gnu
-            cuda_version: "12.4.0"
-            features: cuda
 
           # Linux aarch64 - CPU only
           - os: ubuntu-22.04-arm64
@@ -134,20 +127,20 @@ jobs:
       # Linux CUDA setup
       - name: Install CUDA (Linux)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Linux'
-        uses: Jimver/cuda-toolkit@v0.2.14
+        uses: Jimver/cuda-toolkit@v0.2.30
         with:
           cuda: ${{ matrix.cuda_version }}
           method: network
-          sub-packages: '["nvcc", "cudart"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
       # Windows CUDA setup
       - name: Install CUDA (Windows)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.14
+        uses: Jimver/cuda-toolkit@v0.2.30
         with:
           cuda: ${{ matrix.cuda_version }}
           method: network
-          sub-packages: '["nvcc", "cudart"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
       # Linux dependencies
       - name: Install Linux dependencies
@@ -171,6 +164,11 @@ jobs:
       - name: Build mistralrs-server
         if: steps.filter.outputs.should_run == 'true'
         shell: bash
+        env:
+          # Set CUDA compute capability to avoid nvidia-smi requirement
+          # Compute cap 80 = A100/A30, 75 = T4, 70 = V100
+          # This supports a wide range of GPUs
+          CUDA_COMPUTE_CAP: ${{ matrix.backend == 'cuda' && '80' || '' }}
         run: |
           # Build command based on backend
           if [ -n "${{ matrix.features }}" ]; then
@@ -217,6 +215,21 @@ jobs:
 
           # Copy binary
           cp "${{ steps.find_binary.outputs.binary_path }}" "release/${{ steps.find_binary.outputs.binary_name }}"
+
+          # For GPU builds (CUDA/ROCm): Copy shared libraries produced by the build
+          # Libraries are copied alongside binary (RPATH uses $ORIGIN to find them)
+          if [[ "${{ matrix.backend }}" == "cuda" || "${{ matrix.backend }}" == "rocm" ]] && [ "${{ runner.os }}" != "Windows" ]; then
+            # Find the build output directory
+            BUILD_DIR=$(dirname "${{ steps.find_binary.outputs.binary_path }}")
+
+            # Copy ALL .so files and symlinks from build output to same directory as binary
+            echo "Copying shared libraries from $BUILD_DIR to release/"
+            find "$BUILD_DIR" -maxdepth 1 \( -name "*.so" -o -name "*.so.*" \) -exec cp -P {} release/ \;
+
+            # List what we copied
+            echo "Packaged shared libraries:"
+            ls -lh release/*.so* 2>/dev/null || echo "No .so files found"
+          fi
 
           # Create version file
           echo "mistralrs-server" > release/version.txt
@@ -272,9 +285,112 @@ jobs:
             ${{ env.ARCHIVE_FILE }}.sha256
           retention-days: 7
 
+  build-cuda:
+    name: Build linux-x86_64-cuda
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.4.0-devel-ubuntu22.04
+    if: |
+      (github.event_name == 'push') ||
+      ((inputs.platform == 'all' || inputs.platform == 'linux') &&
+       (inputs.backend == 'all' || inputs.backend == 'cuda'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl pkg-config libssl-dev python3 python3-dev git
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        env:
+          CARGO_HOME: /root/.cargo
+          RUSTUP_HOME: /root/.rustup
+
+      - name: Verify Rust installation
+        run: |
+          . $HOME/.cargo/env
+          rustc --version
+          cargo --version
+
+      - name: Build mistralrs-server
+        run: |
+          . $HOME/.cargo/env
+          cargo build --release --package mistralrs-server --features cuda
+          echo "Build complete"
+          ls -lah target/release/
+        env:
+          CARGO_TARGET_DIR: target
+          CARGO_BUILD_JOBS: 4
+          CUDA_COMPUTE_CAP: "80"
+
+      - name: Find binary path
+        id: find_binary
+        run: |
+          BINARY_PATH="target/release/mistralrs-server"
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "ERROR: Binary not found at $BINARY_PATH!"
+            find target/release -name "mistralrs-server*" || true
+            exit 1
+          fi
+          echo "binary_path=$BINARY_PATH" >> $GITHUB_OUTPUT
+          echo "Found binary at: $BINARY_PATH"
+
+      - name: Prepare release archive
+        run: |
+          mkdir -p release
+
+          # Copy binary
+          cp "${{ steps.find_binary.outputs.binary_path }}" "release/mistralrs-server"
+
+          # Copy shared libraries
+          BUILD_DIR=$(dirname "${{ steps.find_binary.outputs.binary_path }}")
+          echo "Copying shared libraries from $BUILD_DIR to release/"
+          find "$BUILD_DIR" -maxdepth 1 \( -name "*.so" -o -name "*.so.*" \) -exec cp -P {} release/ \;
+
+          echo "Packaged shared libraries:"
+          ls -lh release/*.so* 2>/dev/null || echo "No .so files found"
+
+          # Create version file
+          echo "mistralrs-server" > release/version.txt
+          echo "${{ github.ref_name }}" >> release/version.txt
+          echo "Backend: cuda" >> release/version.txt
+          echo "Platform: linux-x86_64" >> release/version.txt
+          echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/version.txt
+
+          chmod +x "release/mistralrs-server"
+
+          echo "Release directory contents:"
+          ls -lah release/
+
+      - name: Create archive
+        run: |
+          tar czf "mistralrs-server-linux-x86_64-cuda.tar.gz" -C release .
+          echo "ARCHIVE_FILE=mistralrs-server-linux-x86_64-cuda.tar.gz" >> $GITHUB_ENV
+
+      - name: Generate checksum
+        run: |
+          shasum -a 256 "$ARCHIVE_FILE" > "${ARCHIVE_FILE}.sha256"
+          cat "${ARCHIVE_FILE}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mistralrs-server-linux-x86_64-cuda
+          path: |
+            ${{ env.ARCHIVE_FILE }}
+            ${{ env.ARCHIVE_FILE }}.sha256
+          retention-days: 7
+
   create-release:
     name: Create GitHub Release
-    needs: build-matrix
+    needs: [build-matrix, build-cuda]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
