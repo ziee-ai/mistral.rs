@@ -160,15 +160,6 @@ jobs:
         if: steps.filter.outputs.should_run == 'true' && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      # Remove Git's bin from PATH on Windows to avoid link.exe conflict
-      - name: Fix Windows PATH
-        if: steps.filter.outputs.should_run == 'true' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $newPath = ($env:PATH -split ';' | Where-Object { $_ -notlike '*\Git\*' }) -join ';'
-          echo "PATH=$newPath" >> $env:GITHUB_ENV
-          echo "Cleaned PATH (removed Git directories)"
-
       # Build mistralrs-server with native Cargo
       - name: Build mistralrs-server
         if: steps.filter.outputs.should_run == 'true'
@@ -179,6 +170,13 @@ jobs:
           # This supports a wide range of GPUs
           CUDA_COMPUTE_CAP: ${{ matrix.backend == 'cuda' && '80' || '' }}
         run: |
+          # On Windows, remove Git from PATH to avoid link.exe conflict
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "Cleaning PATH to remove Git directories"
+            export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/c/Program Files/Git' | grep -v '/Git/' | tr '\n' ':' | sed 's/:$//')
+            echo "Cleaned PATH: $PATH"
+          fi
+
           # Build command based on backend
           if [ -n "${{ matrix.features }}" ]; then
             echo "Building with features: ${{ matrix.features }}"
