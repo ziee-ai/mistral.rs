@@ -160,6 +160,15 @@ jobs:
         if: steps.filter.outputs.should_run == 'true' && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Remove Git's bin from PATH on Windows to avoid link.exe conflict
+      - name: Fix Windows PATH
+        if: steps.filter.outputs.should_run == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $newPath = ($env:PATH -split ';' | Where-Object { $_ -notlike '*\Git\*' }) -join ';'
+          echo "PATH=$newPath" >> $env:GITHUB_ENV
+          echo "Cleaned PATH (removed Git directories)"
+
       # Build mistralrs-server with native Cargo
       - name: Build mistralrs-server
         if: steps.filter.outputs.should_run == 'true'
