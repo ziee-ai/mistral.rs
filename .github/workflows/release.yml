@@ -320,13 +320,13 @@ jobs:
 
       - name: Verify Rust installation
         run: |
-          . $HOME/.cargo/env
+          . /root/.cargo/env
           rustc --version
           cargo --version
 
       - name: Build mistralrs-server
         run: |
-          . $HOME/.cargo/env
+          . /root/.cargo/env
           cargo build --release --package mistralrs-server --features cuda
           echo "Build complete"
           ls -lah target/release/
