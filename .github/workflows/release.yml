@@ -301,6 +301,10 @@ jobs:
       ((inputs.platform == 'all' || inputs.platform == 'linux') &&
        (inputs.backend == 'all' || inputs.backend == 'cuda'))
 
+    env:
+      CARGO_HOME: /root/.cargo
+      RUSTUP_HOME: /root/.rustup
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -313,10 +317,7 @@ jobs:
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        env:
-          CARGO_HOME: /root/.cargo
-          RUSTUP_HOME: /root/.rustup
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
 
       - name: Verify Rust installation
         run: |
