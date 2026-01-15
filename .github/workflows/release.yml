@@ -173,12 +173,12 @@ jobs:
           # Windows: Remove Git from PATH to avoid link.exe conflict
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "Original PATH (first 500 chars): ${PATH:0:500}"
-            # Filter out Git directories from PATH
-            NEW_PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -i '/Git/' | tr '\n' ':' | sed 's/:$//')
+            # Filter out Git for Windows directories (/mingw64/bin and /usr/bin contain Git's link.exe)
+            NEW_PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -E '^/(mingw64|usr)/bin$' | tr '\n' ':' | sed 's/:$//')
             export PATH="$NEW_PATH"
             echo "Cleaned PATH (first 500 chars): ${PATH:0:500}"
             echo "Verifying link.exe location:"
-            which link.exe || echo "link.exe not found in PATH"
+            which link.exe || echo "link.exe not found in PATH (expected - will use MSVC linker)"
           fi
 
           # Build command based on backend
