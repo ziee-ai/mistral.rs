@@ -301,10 +301,6 @@ jobs:
       ((inputs.platform == 'all' || inputs.platform == 'linux') &&
        (inputs.backend == 'all' || inputs.backend == 'cuda'))
 
-    env:
-      CARGO_HOME: /root/.cargo
-      RUSTUP_HOME: /root/.rustup
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -314,20 +310,18 @@ jobs:
           apt-get update
           apt-get install -y build-essential curl pkg-config libssl-dev python3 python3-dev git
 
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "/root/.cargo/bin" >> $GITHUB_PATH
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Verify Rust installation
-        run: |
-          . /root/.cargo/env
-          rustc --version
-          cargo --version
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Build mistralrs-server
         run: |
-          . /root/.cargo/env
           cargo build --release --package mistralrs-server --features cuda
           echo "Build complete"
           ls -lah target/release/
