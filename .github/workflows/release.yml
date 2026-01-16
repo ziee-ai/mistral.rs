@@ -264,28 +264,13 @@ jobs:
             echo "ARCHIVE_FILE=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
           fi
 
-      # Generate checksum
-      - name: Generate checksum
-        if: steps.filter.outputs.should_run == 'true'
-        shell: bash
-        run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            certutil -hashfile "$ARCHIVE_FILE" SHA256 > "${ARCHIVE_FILE}.sha256"
-          else
-            shasum -a 256 "$ARCHIVE_FILE" > "${ARCHIVE_FILE}.sha256"
-          fi
-
-          cat "${ARCHIVE_FILE}.sha256"
-
       # Upload artifacts
       - name: Upload artifact
         if: steps.filter.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
-          path: |
-            ${{ env.ARCHIVE_FILE }}
-            ${{ env.ARCHIVE_FILE }}.sha256
+          path: ${{ env.ARCHIVE_FILE }}
           retention-days: 7
 
   build-cuda:
@@ -370,18 +355,11 @@ jobs:
           tar czf "mistralrs-server-linux-x86_64-cuda.tar.gz" -C release .
           echo "ARCHIVE_FILE=mistralrs-server-linux-x86_64-cuda.tar.gz" >> $GITHUB_ENV
 
-      - name: Generate checksum
-        run: |
-          shasum -a 256 "$ARCHIVE_FILE" > "${ARCHIVE_FILE}.sha256"
-          cat "${ARCHIVE_FILE}.sha256"
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mistralrs-server-linux-x86_64-cuda
-          path: |
-            ${{ env.ARCHIVE_FILE }}
-            ${{ env.ARCHIVE_FILE }}.sha256
+          path: ${{ env.ARCHIVE_FILE }}
           retention-days: 7
 
   create-release:
@@ -405,7 +383,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
           ls -lah release-assets/
 
       - name: Create Release
@@ -421,7 +399,6 @@ jobs:
             ### Supported Platforms and Backends
 
             - **Linux x86_64**: CPU, CUDA
-            - **Linux aarch64**: CPU
             - **macOS aarch64**: Metal
             - **Windows x86_64**: CPU, CUDA
 
@@ -430,12 +407,5 @@ jobs:
             1. Download the appropriate archive for your platform and GPU backend
             2. Extract the archive
             3. The `mistralrs-server` binary is ready to use
-
-            ### Checksums
-
-            SHA256 checksums are provided for each archive file. Verify downloads with:
-            ```bash
-            shasum -a 256 -c mistralrs-server-*.sha256
-            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
