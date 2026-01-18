@@ -1,10 +1,11 @@
 use crate::{
     get_mut_arcmutex, get_mut_group,
     harmony::HarmonyContext,
-    paged_attention::PhysicalTokenBlock,
+    paged_attention::BlockRef,
     pipeline::{text_models_inputs_processor::PagedAttentionMeta, LayerCaches},
     response::{ChatCompletionChunkResponse, Choice, ChunkChoice, Response, SYSTEM_FINGERPRINT},
     sampler::{Logprobs, Sampler},
+    think_tags::ThinkTagContext,
     AudioInput, ChatCompletionResponse, Usage,
 };
 use crate::{
@@ -79,7 +80,7 @@ pub enum SequenceRecognizer {
 enum SequenceCustomMetadata {
     PagedAttention {
         logical_token_blocks: Vec<LogicalTokenBlock>,
-        physical_blocks_prefill: Option<Vec<Arc<PhysicalTokenBlock>>>,
+        physical_blocks_prefill: Option<Vec<BlockRef>>,
         block_size: usize,
     },
     None,
@@ -458,6 +459,9 @@ pub struct Sequence {
 
     // Harmony format parsing context (for GPT-OSS models)
     harmony_context: Option<HarmonyContext>,
+
+    // Think tag parsing context (for models using <think>...</think> tags)
+    think_tag_context: Option<ThinkTagContext>,
 }
 
 impl BlockEngineSequence for Sequence {
@@ -489,7 +493,7 @@ impl BlockEngineSequence for Sequence {
         }
     }
 
-    fn take_physical_blocks_prefill(&mut self) -> Option<Vec<Arc<PhysicalTokenBlock>>> {
+    fn take_physical_blocks_prefill(&mut self) -> Option<Vec<BlockRef>> {
         match &mut self.custom_metadata {
             SequenceCustomMetadata::PagedAttention {
                 logical_token_blocks: _,
@@ -626,6 +630,7 @@ impl Sequence {
             total_prompt_time: None,
             waitlisted_count: 0,
             harmony_context: None,
+            think_tag_context: None,
         }
     }
 
@@ -663,7 +668,7 @@ impl Sequence {
     pub fn prefill_v2_paged(
         mut self,
         logical_blocks: Vec<LogicalTokenBlock>,
-        physical_blocks: Vec<Arc<PhysicalTokenBlock>>,
+        physical_blocks: Vec<BlockRef>,
         toks: Vec<u32>,
         offset: usize,
     ) -> Self {
@@ -904,6 +909,14 @@ impl Sequence {
         // Process token through Harmony parser if in Harmony mode
         if let Some(ref mut harmony_ctx) = self.harmony_context {
             let _ = harmony_ctx.process_token(tok.token);
+        }
+
+        // Process token through think tag parser if in think tag mode
+        if let Some(ref mut think_ctx) = self.think_tag_context {
+            if !stopped_by_token {
+                // Use process_bytes to handle incomplete UTF-8 sequences (e.g., emojis split across tokens)
+                think_ctx.process_bytes(&completion_bytes);
+            }
         }
 
         self.cumulative_logprob += tok.logprob;
@@ -1242,6 +1255,77 @@ impl Sequence {
             .as_mut()
             .map(|ctx| ctx.finalize_tool_calls())
             .unwrap_or_default()
+    }
+
+    // === Think Tag Format Support ===
+
+    /// Enable think tag parsing for this sequence.
+    /// Should be called when the model uses `<think>...</think>` tags.
+    ///
+    /// If the prompt ends with `<think>`, the context will start inside a think block
+    /// since the chat template hardcoded the opening tag.
+    pub fn enable_think_tag_mode(&mut self) {
+        if self.think_tag_context.is_none() {
+            // Check if the prompt ends with <think> (template hardcoded the opening tag)
+            let starts_in_think_block = self.prompt.trim_end().ends_with("<think>");
+            self.think_tag_context = Some(if starts_in_think_block {
+                ThinkTagContext::new_in_think_block()
+            } else {
+                ThinkTagContext::new()
+            });
+        }
+    }
+
+    /// Check if this sequence is in think tag mode
+    pub fn is_think_tag_mode(&self) -> bool {
+        self.think_tag_context.is_some()
+    }
+
+    /// Process text through the think tag parser (if enabled).
+    pub fn process_think_tag_text(&mut self, text: &str) {
+        if let Some(ref mut ctx) = self.think_tag_context {
+            ctx.process_text(text);
+        }
+    }
+
+    /// Get the latest think tag reasoning delta (for streaming).
+    /// Returns None if not in think tag mode or no new reasoning content.
+    pub fn get_think_tag_reasoning_delta(&mut self) -> Option<String> {
+        self.think_tag_context
+            .as_mut()
+            .and_then(|ctx| ctx.get_reasoning_delta())
+    }
+
+    /// Get the latest think tag content delta (for streaming).
+    /// Returns None if not in think tag mode or no new content.
+    pub fn get_think_tag_content_delta(&mut self) -> Option<String> {
+        self.think_tag_context
+            .as_mut()
+            .and_then(|ctx| ctx.get_content_delta())
+    }
+
+    /// Get accumulated think tag reasoning content (for non-streaming).
+    /// Returns None if not in think tag mode or no reasoning content.
+    pub fn get_think_tag_reasoning_content(&self) -> Option<String> {
+        self.think_tag_context
+            .as_ref()
+            .and_then(|ctx| ctx.reasoning_content())
+    }
+
+    /// Get accumulated think tag content (for non-streaming).
+    /// Returns None if not in think tag mode or no content.
+    pub fn get_think_tag_content(&self) -> Option<String> {
+        self.think_tag_context
+            .as_ref()
+            .and_then(|ctx| ctx.content())
+    }
+
+    /// Finalize think tag parsing at end of stream.
+    /// Handles unclosed `<think>` blocks.
+    pub fn think_tag_finalize(&mut self) {
+        if let Some(ref mut ctx) = self.think_tag_context {
+            ctx.finalize();
+        }
     }
 }
 

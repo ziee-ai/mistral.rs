@@ -3920,7 +3920,8 @@ impl VisionModelLoader for Mistral3Loader {
         normal_loading_metadata: NormalLoadingMetadata,
         attention_mechanism: AttentionImplementation,
     ) -> Result<Box<dyn VisionModel + Send + Sync>> {
-        let cfg: crate::vision_models::mistral3::Mistral3Config = serde_json::from_str(config)?;
+        let mut cfg: crate::vision_models::mistral3::Mistral3Config = serde_json::from_str(config)?;
+        cfg.propagate_quantization_config();
         Ok(Box::new(Mistral3Model::new(
             &cfg,
             vb,
@@ -5507,18 +5508,8 @@ pub struct Qwen3VLLoader;
 pub struct Qwen3VLPrefixer;
 
 impl MultimodalPromptPrefixer for Qwen3VLPrefixer {
-    fn prefix_image(&self, image_indexes: Vec<usize>, prompt: &str) -> String {
-        format!(
-            "{}{prompt}",
-            format!(
-                "{}{}{}",
-                Qwen3VLProcessor::VISION_START,
-                Qwen3VLProcessor::IMAGE_PAD,
-                Qwen3VLProcessor::VISION_END
-            )
-            .repeat(image_indexes.len())
-        )
-    }
+    // No-op: With MessagesAction::Keep, the chat template handles image tokens
+    // when it sees {"type": "image"} entries in the content.
 }
 
 impl VisionModelLoader for Qwen3VLLoader {
@@ -5812,18 +5803,8 @@ pub struct Qwen3VLMoELoader;
 pub struct Qwen3VLMoEPrefixer;
 
 impl MultimodalPromptPrefixer for Qwen3VLMoEPrefixer {
-    fn prefix_image(&self, image_indexes: Vec<usize>, prompt: &str) -> String {
-        format!(
-            "{}{prompt}",
-            format!(
-                "{}{}{}",
-                Qwen3VLMoEProcessor::VISION_START,
-                Qwen3VLMoEProcessor::IMAGE_PAD,
-                Qwen3VLMoEProcessor::VISION_END
-            )
-            .repeat(image_indexes.len())
-        )
-    }
+    // No-op: With MessagesAction::Keep, the chat template handles image tokens
+    // when it sees {"type": "image"} entries in the content.
 }
 
 impl VisionModelLoader for Qwen3VLMoELoader {

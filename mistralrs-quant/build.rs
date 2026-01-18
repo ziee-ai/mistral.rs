@@ -20,6 +20,7 @@ fn cuda_version_from_build_system() -> (usize, usize) {
     let version_number = release_section.split(' ').nth(1).unwrap();
 
     match version_number {
+        "13.1" => (13, 1),
         "13.0" => (13, 0),
         "12.9" => (12, 9),
         "12.8" => (12, 8),
@@ -213,6 +214,8 @@ fn main() -> Result<(), String> {
             "kernels/afq/afq.cu",
             "kernels/afq/afq_gemm.cu",
             "kernels/mxfp4/mxfp4_gemm.cu", // MXFP4 works on all compute caps
+            "kernels/gemv/gemv.cu",        // Custom GEMV for decode-phase inference
+            "kernels/indexed_moe/indexed_moe.cu", // Indexed MoE forward for GGUF quantized weights
         ];
         if cc_over_800 {
             lib_files.push("kernels/marlin/marlin_matmul_f16.cu");
@@ -295,14 +298,16 @@ fn main() -> Result<(), String> {
         use std::process::Command;
         use std::{env, str};
 
-        const METAL_SOURCES: [&str; 10] = [
+        const METAL_SOURCES: [&str; 12] = [
             "bitwise",
             "blockwise_fp8",
             "bnb_dequantize",
+            "fused_glu",
             "hqq_dequantize",
             "hqq_bitpack",
             "mxfp4",
             "quantized",
+            "scalar_fp8",
             "scan",
             "sort",
             "copy",

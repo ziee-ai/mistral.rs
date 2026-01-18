@@ -259,7 +259,7 @@ impl Loader for VisionLoader {
         device: &Device,
         silent: bool,
         mut mapper: DeviceMapSetting,
-        mut in_situ_quant: Option<IsqType>,
+        in_situ_quant: Option<IsqType>,
         mut paged_attn_config: Option<PagedAttentionConfig>,
     ) -> Result<Arc<Mutex<dyn Pipeline + Send + Sync>>> {
         let _progress_guard = ProgressScopeGuard::new(silent);
@@ -276,9 +276,11 @@ impl Loader for VisionLoader {
         let available_devices = if let Ok(payload) = env::var(distributed::IS_DAEMON_FLAG) {
             let payload: WorkerTransferData = serde_json::from_str(&payload)?;
             let WorkerTransferData::Init { id: _, worker_rank } = payload;
-            vec![candle_core::Device::new_cuda_with_stream(worker_rank + 1)?]
+            // Use new_cuda instead of new_cuda_with_stream for NCCL compatibility
+            // NCCL manages its own streams, so explicit stream creation can cause conflicts
+            vec![candle_core::Device::new_cuda(worker_rank + 1)?]
         } else if use_nccl {
-            vec![candle_core::Device::new_cuda_with_stream(0)?]
+            vec![candle_core::Device::new_cuda(0)?]
         } else {
             device_map::get_all_similar_devices(device)?
         };
@@ -326,11 +328,6 @@ impl Loader for VisionLoader {
 
             // Initial dtype
             let dtype = dtype.try_into_dtype(&available_devices.iter().collect::<Vec<_>>())?;
-
-            // Disable ISQ if we are loading a prequantized model.
-            if QuantizationConfigShim::get_quant_config_pack_factor(&config, dtype)? != 1 {
-                in_situ_quant = None;
-            }
 
             // ISQ or UQFF: quantized path
             // Match logic below where UQFF has priority
