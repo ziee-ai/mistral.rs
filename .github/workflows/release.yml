@@ -148,6 +148,33 @@ jobs:
         with:
           cuda_version: ${{ matrix.cuda_version }}
 
+      # Install libcurand (Windows). The vendored windows-setup-cuda action
+      # follows upstream llama.cpp's package list, which doesn't include
+      # curand because llama.cpp doesn't link against it. cudarc (the
+      # transitive dep mistralrs-quant pulls in) DOES link curand, and
+      # without it the build fails with:
+      #   LINK : fatal error LNK1181: cannot open input file 'curand.lib'
+      # Patch versions of libcurand are taken from NVIDIA's official
+      # redistrib_<cuda_version>.json manifests.
+      - name: Install libcurand (Windows)
+        if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ('${{ matrix.cuda_version }}' -eq '12.4') {
+            $curandZip = 'libcurand-windows-x86_64-10.3.5.147-archive'
+          } elseif ('${{ matrix.cuda_version }}' -eq '13.1') {
+            $curandZip = 'libcurand-windows-x86_64-10.4.1.34-archive'
+          } else {
+            Write-Error "Unhandled cuda_version '${{ matrix.cuda_version }}' for libcurand pin"
+            exit 1
+          }
+          $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ matrix.cuda_version }}"
+          $stage = "$env:RUNNER_TEMP\curand-stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          curl.exe -fSL -o "$stage\$curandZip.zip" "https://developer.download.nvidia.com/compute/cuda/redist/libcurand/windows-x86_64/$curandZip.zip"
+          Expand-Archive -Force -Path "$stage\$curandZip.zip" -DestinationPath $stage
+          xcopy "$stage\$curandZip\*" "$cudaPath" /E /I /H /Y
+
       # Linux dependencies
       - name: Install Linux dependencies
         if: steps.filter.outputs.should_run == 'true' && runner.os == 'Linux'
