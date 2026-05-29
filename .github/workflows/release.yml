@@ -66,16 +66,16 @@ jobs:
             arch: x86_64
             backend: cuda
             target: x86_64-pc-windows-msvc
-            cuda_version: "12.6.0"
-            version_suffix: "12.6"
+            cuda_version: "12.9.1"
+            version_suffix: "12.9"
             features: cuda
           - os: windows-2022
             platform: windows
             arch: x86_64
             backend: cuda
             target: x86_64-pc-windows-msvc
-            cuda_version: "13.0.0"
-            version_suffix: "13.0"
+            cuda_version: "13.2.0"
+            version_suffix: "13.2"
             features: cuda
 
     steps:
@@ -302,10 +302,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - cuda_version: "12.6.0"
-            version_suffix: "12.6"
-          - cuda_version: "13.0.0"
-            version_suffix: "13.0"
+          - cuda_version: "12.9.1"
+            version_suffix: "12.9"
+          - cuda_version: "13.2.0"
+            version_suffix: "13.2"
     if: |
       (github.event_name == 'push') ||
       ((inputs.platform == 'all' || inputs.platform == 'linux') &&
@@ -427,16 +427,16 @@ jobs:
 
             ### Supported Platforms and Backends
 
-            - **Linux x86_64**: CPU, CUDA 12.6, CUDA 13.0
+            - **Linux x86_64**: CPU, CUDA 12.9, CUDA 13.2
             - **macOS aarch64**: Metal
-            - **Windows x86_64**: CPU, CUDA 12.6, CUDA 13.0
+            - **Windows x86_64**: CPU, CUDA 12.9, CUDA 13.2
 
             ### Pick the right CUDA artifact
 
             | Artifact suffix | Driver / runtime requirement |
             | --- | --- |
-            | `-cuda13.0` | Driver ≥ 580, CUDA runtime 13.x. Modern (Turing → Blackwell). |
-            | `-cuda12.6` | Driver ≥ 525, CUDA runtime 12.x. Broader compat — covers older driver lines still on 12.x. |
+            | `-cuda13.2` | Driver ≥ 580, CUDA runtime 13.x. Modern (Turing → Blackwell). |
+            | `-cuda12.9` | Driver ≥ 575, CUDA runtime 12.x. Latest 12.x branch — covers driver lines still on 12.x toolkits. |
 
             ### Installation
 
