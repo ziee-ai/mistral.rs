@@ -61,21 +61,26 @@ jobs:
             arch: x86_64
             backend: cpu
             target: x86_64-pc-windows-msvc
+          # Windows-CUDA installs via the vendored windows-setup-cuda
+          # composite action (lifted from ggml-org/llama.cpp). Jimver/
+          # cuda-toolkit can't fetch the cuda_crt redist package required by
+          # CUDA 13+ (Jimver issue #437). The action only supports specific
+          # version pins: 12.4 and 13.3 here.
           - os: windows-2022
             platform: windows
             arch: x86_64
             backend: cuda
             target: x86_64-pc-windows-msvc
-            cuda_version: "12.9.1"
-            version_suffix: "12.9"
+            cuda_version: "12.4"
+            version_suffix: "12.4"
             features: cuda
           - os: windows-2022
             platform: windows
             arch: x86_64
             backend: cuda
             target: x86_64-pc-windows-msvc
-            cuda_version: "13.2.0"
-            version_suffix: "13.2"
+            cuda_version: "13.3"
+            version_suffix: "13.3"
             features: cuda
 
     steps:
@@ -134,14 +139,14 @@ jobs:
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
-      # Windows CUDA setup
+      # Windows CUDA setup. Uses the vendored windows-setup-cuda action
+      # which explicitly fetches cuda_crt (needed for CUDA 13+) — Jimver
+      # doesn't (Jimver #437).
       - name: Install CUDA (Windows)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: ./.github/actions/windows-setup-cuda
         with:
-          cuda: ${{ matrix.cuda_version }}
-          method: network
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev", "thrust", "visual_studio_integration"]'
+          cuda_version: ${{ matrix.cuda_version }}
 
       # Linux dependencies
       - name: Install Linux dependencies
@@ -429,14 +434,16 @@ jobs:
 
             - **Linux x86_64**: CPU, CUDA 12.9, CUDA 13.2
             - **macOS aarch64**: Metal
-            - **Windows x86_64**: CPU, CUDA 12.9, CUDA 13.2
+            - **Windows x86_64**: CPU, CUDA 12.4, CUDA 13.3
 
             ### Pick the right CUDA artifact
 
             | Artifact suffix | Driver / runtime requirement |
             | --- | --- |
-            | `-cuda13.2` | Driver ≥ 580, CUDA runtime 13.x. Modern (Turing → Blackwell). |
-            | `-cuda12.9` | Driver ≥ 575, CUDA runtime 12.x. Latest 12.x branch — covers driver lines still on 12.x toolkits. |
+            | Linux `-cuda13.2`, Windows `-cuda13.3` | Driver ≥ 580 (Linux) / ≥ 581 (Windows), CUDA runtime 13.x. Modern (Turing → Blackwell). |
+            | Linux `-cuda12.9`, Windows `-cuda12.4` | Driver ≥ 525 (12.4 Windows) / ≥ 575 (12.9 Linux), CUDA runtime 12.x. |
+
+            *Note*: Linux + Windows pin different CUDA patch versions because the two installer paths track different version catalogs (Linux uses NVIDIA's docker containers, Windows uses a curl/unpack script vendored from upstream llama.cpp). Both 12.x binaries are mutually-runnable with any matching driver line.
 
             ### Installation
 
