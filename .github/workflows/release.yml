@@ -55,7 +55,7 @@ jobs:
             target: aarch64-apple-darwin
             features: metal
 
-          # Windows x86_64 - CPU, CUDA
+          # Windows x86_64 - CPU, CUDA (12 + 13)
           - os: windows-2022
             platform: windows
             arch: x86_64
@@ -66,7 +66,16 @@ jobs:
             arch: x86_64
             backend: cuda
             target: x86_64-pc-windows-msvc
-            cuda_version: "12.4.0"
+            cuda_version: "12.6.0"
+            version_suffix: "12.6"
+            features: cuda
+          - os: windows-2022
+            platform: windows
+            arch: x86_64
+            backend: cuda
+            target: x86_64-pc-windows-msvc
+            cuda_version: "13.0.0"
+            version_suffix: "13.0"
             features: cuda
 
     steps:
@@ -254,14 +263,23 @@ jobs:
         if: steps.filter.outputs.should_run == 'true'
         shell: bash
         run: |
-          ARCHIVE_NAME="mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}"
+          # Append version suffix when set (Windows-CUDA matrix has 12.6
+          # and 13.0 entries — without the suffix the two upload-artifact
+          # names would collide).
+          SUFFIX=""
+          if [ -n "${{ matrix.version_suffix }}" ]; then
+            SUFFIX="${{ matrix.version_suffix }}"
+          fi
+          ARCHIVE_NAME="mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}${SUFFIX}"
 
           if [ "${{ runner.os }}" == "Windows" ]; then
             7z a "${ARCHIVE_NAME}.zip" ./release/*
             echo "ARCHIVE_FILE=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
           else
             tar czf "${ARCHIVE_NAME}.tar.gz" -C release .
             echo "ARCHIVE_FILE=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
           fi
 
       # Upload artifacts
@@ -269,14 +287,25 @@ jobs:
         if: steps.filter.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: mistralrs-server-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARCHIVE_FILE }}
           retention-days: 7
 
+  # Linux CUDA — matrix on two NVIDIA container images. CUDA 13 needs
+  # driver >=580; 12.x stays on driver >=525, so we ship both and let
+  # the user pick the artifact matching their driver line.
   build-cuda:
-    name: Build linux-x86_64-cuda
+    name: Build linux-x86_64-cuda${{ matrix.version_suffix }}
     runs-on: ubuntu-latest
-    container: nvidia/cuda:12.4.0-devel-ubuntu22.04
+    container: nvidia/cuda:${{ matrix.cuda_version }}-devel-ubuntu22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda_version: "12.6.0"
+            version_suffix: "12.6"
+          - cuda_version: "13.0.0"
+            version_suffix: "13.0"
     if: |
       (github.event_name == 'push') ||
       ((inputs.platform == 'all' || inputs.platform == 'linux') &&
@@ -341,7 +370,7 @@ jobs:
           # Create version file
           echo "mistralrs-server" > release/version.txt
           echo "${{ github.ref_name }}" >> release/version.txt
-          echo "Backend: cuda" >> release/version.txt
+          echo "Backend: cuda ${{ matrix.version_suffix }}" >> release/version.txt
           echo "Platform: linux-x86_64" >> release/version.txt
           echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release/version.txt
 
@@ -352,13 +381,13 @@ jobs:
 
       - name: Create archive
         run: |
-          tar czf "mistralrs-server-linux-x86_64-cuda.tar.gz" -C release .
-          echo "ARCHIVE_FILE=mistralrs-server-linux-x86_64-cuda.tar.gz" >> $GITHUB_ENV
+          tar czf "mistralrs-server-linux-x86_64-cuda${{ matrix.version_suffix }}.tar.gz" -C release .
+          echo "ARCHIVE_FILE=mistralrs-server-linux-x86_64-cuda${{ matrix.version_suffix }}.tar.gz" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mistralrs-server-linux-x86_64-cuda
+          name: mistralrs-server-linux-x86_64-cuda${{ matrix.version_suffix }}
           path: ${{ env.ARCHIVE_FILE }}
           retention-days: 7
 
@@ -398,9 +427,16 @@ jobs:
 
             ### Supported Platforms and Backends
 
-            - **Linux x86_64**: CPU, CUDA
+            - **Linux x86_64**: CPU, CUDA 12.6, CUDA 13.0
             - **macOS aarch64**: Metal
-            - **Windows x86_64**: CPU, CUDA
+            - **Windows x86_64**: CPU, CUDA 12.6, CUDA 13.0
+
+            ### Pick the right CUDA artifact
+
+            | Artifact suffix | Driver / runtime requirement |
+            | --- | --- |
+            | `-cuda13.0` | Driver ≥ 580, CUDA runtime 13.x. Modern (Turing → Blackwell). |
+            | `-cuda12.6` | Driver ≥ 525, CUDA runtime 12.x. Broader compat — covers older driver lines still on 12.x. |
 
             ### Installation
 
