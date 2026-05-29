@@ -128,7 +128,7 @@ jobs:
       # Linux CUDA setup
       - name: Install CUDA (Linux)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Linux'
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: ${{ matrix.cuda_version }}
           method: network
@@ -137,7 +137,7 @@ jobs:
       # Windows CUDA setup
       - name: Install CUDA (Windows)
         if: steps.filter.outputs.should_run == 'true' && matrix.backend == 'cuda' && runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: ${{ matrix.cuda_version }}
           method: network
