@@ -33,7 +33,12 @@ on:
 
 jobs:
   build-matrix:
-    name: Build ${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}
+    # Include matrix.version_suffix so the two Windows-CUDA entries
+    # (currently 12.4 + 13.1) get distinct names in the Actions UI
+    # instead of both displaying as "Build windows-x86_64-cuda".
+    # Non-CUDA matrix entries leave version_suffix unset → no trailing
+    # suffix, so e.g. CPU and Metal jobs keep their existing names.
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.backend }}${{ matrix.version_suffix }}
     runs-on: ${{ matrix.os }}
 
     strategy:
